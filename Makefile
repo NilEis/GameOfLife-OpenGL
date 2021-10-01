@@ -3,10 +3,10 @@ SRC = src
 SRCS = $(wildcard $(SRC)/*.c)
 OBJ = obj
 OBJS = $(patsubst $(SRC)/%.c, $(OBJ)/%.o, $(SRCS))
-FLAGS = -O3 -Wall -fopenacc -fopenacc-dim=1024:2:64 -fopt-info-optimized-omp
-#FLAGS = -O3 -Wall -DFREEGLUT_STATIC
-LFLAGS = -lfreeglut -lopengl32 -lglu32 #-Wl,--subsystem,windows
-#LFLAGS = -lfreeglut_static -lopengl32 -lglu32 -lwinmm -lgdi32 #-Wl,--subsystem,windows
+FLAGS = -O3 -Wall -fopenacc -fopenacc-dim=1024:1:64 -fopt-info-optimized-omp -fopenmp
+#FLAGS += -DFREEGLUT_STATIC
+LFLAGS = -lfreeglut -lopengl32 -lglu32 -s#-Wl,--subsystem,windows
+#LFLAGS = -lfreeglut_static -lopengl32 -lglu32 -lwinmm -lgdi32 #-Wl,--subsystem,windows -s
 BINDIR = bin
 BIN = $(BINDIR)/opengl
 

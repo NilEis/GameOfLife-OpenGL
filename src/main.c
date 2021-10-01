@@ -1,17 +1,43 @@
+#ifndef ACC
+#define ACC 1
+#endif
+
+#ifndef MP
+#define MP 0
+#endif
+
+#ifndef GUI
+#define GUI 0
+#endif
+
+#ifndef LOG
+#define LOG 1
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#if GUI
 #include <GL/glut.h>
-#include <time.h>
+#endif
+#if ACC
 #include <openacc.h>
+#endif
+#if MP
+#include <omp.h>
+#endif
+#include <time.h>
 
-clock_t start;
+clock_t start, cycles, min = LONG_MAX, max = 0, avg, current;
+size_t runs = 0;
 
-#define WIDTH 1920
-#define HEIGHT 1080
+#ifndef WIDTH
+#define WIDTH (int)(1920 * 2)
+#endif
 
-#define ACC 1
-#define ACC_DEVICE_TYPE nvidia
+#ifndef HEIGHT
+#define HEIGHT (int)(1080 * 2)
+#endif
 
 #define XY_TO_I(y, x) ((y)*WIDTH + (x))
 
@@ -26,15 +52,6 @@ void update_map();
 
 int main(int argc, char **argv)
 {
-	glutInit(&argc, argv);
-	glViewport(0, 0, WIDTH, HEIGHT);
-	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA);
-	glutInitWindowSize(600, 400);
-	glutInitWindowPosition(500, 500);
-	glutCreateWindow("Game of life");
-	gluOrtho2D(0, WIDTH, HEIGHT, 0);
-	//glutFullScreen();
-	glutDisplayFunc(draw);
 	int x = WIDTH / 2, y;
 	for (y = 0; y < HEIGHT; y++)
 	{
@@ -47,8 +64,62 @@ int main(int argc, char **argv)
 	}
 #if ACC
 #pragma acc enter data copyin(map_a, map_b)
+	switch (acc_get_device_type())
+	{
+	case acc_device_current:
+		printf("OpenACC: %s\n", "current");
+		break;
+	case acc_device_none:
+		printf("OpenACC: %s\n", "none");
+		break;
+	case acc_device_default:
+		printf("OpenACC: %s\n", "default");
+		break;
+	case acc_device_host:
+		printf("OpenACC: %s\n", "host");
+		break;
+	case acc_device_not_host:
+		printf("OpenACC: %s\n", "not_host");
+		break;
+	case acc_device_nvidia:
+		printf("OpenACC: %s\n", "nvidia");
+		break;
+	case acc_device_radeon:
+		printf("OpenACC: %s\n", "radeon");
+		break;
+	}
+	static const char title[] = "Game of life openACC: ON";
+#elif MP
+	omp_set_num_threads(omp_get_num_procs());
+	printf("Threads: %d\n", omp_get_num_procs());
+	static const char title[] = "Game of life openMP: ON";
+#else
+	static const char title[] = "Game of life";
 #endif
+#if GUI
+	glutInit(&argc, argv);
+	glViewport(0, 0, WIDTH, HEIGHT);
+	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA);
+	glutInitWindowSize(WIDTH, HEIGHT);
+	glutInitWindowPosition(500, 500);
+	glutCreateWindow(title);
+	gluOrtho2D(0, WIDTH, HEIGHT, 0);
+	//glutFullScreen();
+	glutDisplayFunc(draw);
 	glutMainLoop();
+#else
+	for (;;)
+	{
+		draw();
+		if (LOG)
+		{
+			avg = cycles / runs;
+			min = (min <= current) * min + (min > current) * current;
+			max = (max >= current) * max + (max < current) * current;
+			printf("Cycles: %.2li - avg: %.2li - min: %.2li - max: %.2li\n", (long)current, (long)avg, (long)min, (long)max);
+		}
+	}
+#endif
 #if ACC
 #pragma acc exit data delete (map_a, map_b)
 #endif
@@ -58,7 +129,17 @@ void draw()
 {
 	start = clock();
 	update_map();
-	printf("Dauer: %li\n", clock() - start);
+	current = clock() - start;
+	cycles += current;
+	runs++;
+	if (LOG)
+	{
+		avg = cycles / runs;
+		min = (min <= current) * min + (min > current) * current;
+		max = (max >= current) * max + (max < current) * current;
+		printf("Cycles: %.2li - avg: %.2li - min: %.2li - max: %.2li\n", (long)current, (long)avg, (long)min, (long)max);
+	}
+#if GUI
 	int x, y, index;
 	glClear(GL_COLOR_BUFFER_BIT);
 	glBegin(GL_QUADS);
@@ -82,19 +163,27 @@ void draw()
 		}
 	}
 	glEnd();
-	map_flag = (map_flag + 1) % 2;
 	glutSwapBuffers();
 	glutPostRedisplay();
+#endif
+	map_flag = (map_flag + 1) % 2;
 }
 
 void update_map()
 {
 	if (map_flag)
 	{
-#pragma acc parallel loop gang present(map_a, map_b)
+#if ACC
+#pragma acc parallel loop independent present(map_a, map_b)
+#endif
+#if MP
+#pragma omp parallel for collapse(2) shared(map_a, map_b)
+#endif
 		for (int y = 1; y < HEIGHT - 1; y++)
 		{
-#pragma acc loop worker vector
+#if ACC
+#pragma acc loop independent worker vector
+#endif
 			for (int x = 1; x < WIDTH - 1; x++)
 			{
 				int neighbors =
@@ -121,14 +210,23 @@ void update_map()
 				}
 			}
 		}
+#if ACC
 #pragma acc update device(map_a)
+#endif
 	}
 	else
 	{
-#pragma acc parallel loop gang present(map_a, map_b)
+#if ACC
+#pragma acc parallel loop independent present(map_a, map_b)
+#endif
+#if MP
+#pragma omp parallel for collapse(2) shared(map_a, map_b)
+#endif
 		for (int y = 1; y < HEIGHT - 1; y++)
 		{
-#pragma acc loop worker vector
+#if ACC
+#pragma acc loop independent worker vector
+#endif
 			for (int x = 1; x < WIDTH - 1; x++)
 			{
 				int neighbors =
@@ -155,6 +253,8 @@ void update_map()
 				}
 			}
 		}
+#if ACC
 #pragma acc update device(map_b)
+#endif
 	}
 }
